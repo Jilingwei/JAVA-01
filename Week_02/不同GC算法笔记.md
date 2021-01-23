@@ -11,7 +11,11 @@
    - 标记阶段会通过可达性分析将不可达的对象标记出来。
    - 清除阶段会将标记阶段标记的垃圾对象清除。
 
-<img src="https://user-gold-cdn.xitu.io/2019/1/18/16861367f77c6c99?imageslim" alt="img" style="zoom:80%;" />
+
+
+![image-20210123210658930](https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxmig6z7j30fp0ac74m.jpg)
+
+
 
 2. 算法特点
 
@@ -97,9 +101,76 @@
 
       新生代分为eden区、from区、to区，老年代是一整块内存空间，如下所示：
 
-      
+      ![img](https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxvizhu7j30nc0kgdg4.jpg)
 
       
+
+      **分代算法执行过程**
+
       
 
+      首先简述一下新生代GC的整个过程（老年代GC会在下面介绍）：新创建的对象总是在eden区中出生，当eden区满时，会触发Minor GC，此时会将eden区中的存活对象复制到from和to中一个没有被使用的空间中，假设是to区（正在被使用的from区中的存活对象也会被复制到to区中）。
+
+      有几种情况，对象会晋升到老年代：
+
+      - 超大对象会直接进入到老年代（受虚拟机参数-XX:PretenureSizeThreshold参数影响，默认值0，即不开启，单位为Byte，例如：3145728=3M，那么超过3M的对象，会直接晋升老年代）
+      - 如果to区已满，多出来的对象也会直接晋升老年代
+      - 复制15次(15岁)后，依然存活的对象，也会进入老年代
+
+      此时eden区和from区都是垃圾对象，可以直接清除。
+
+      PS：为什么复制15次(15岁)后，被判定为高龄对象，晋升到老年代呢？
+
+      因为每个对象的年龄是存在对象头中的，对象头用4bit存储了这个年龄数，而4bit最大可以表示十进制的15，所以是15岁。
+
+      下面从JVM启动开始，描述GC的过程。
+
+      JVM刚启动并初始化完成后，几块内存空间分配完毕，此时状态如上图所示。
+
+      （1）新创建的对象总是会出生在eden区
+
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxvv3wtyj30ni0km3yw.jpg" alt="img" style="zoom:67%;" />
+
+      （2）当eden区满的时候，会触发一次Minor GC，此时会从from和to区中找一个没有使用的空间，将eden区中还存活的对象复制过去（第一次from和to都是空的，使用from区），被复制的对象的年龄会+1，并清除eden区中的垃圾对象。
+
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxw89rwnj30nj0kg3zp.jpg" alt="img" style="zoom:67%;" />
+
+      （3）程序继续运行，又在eden区产生了新的对象，并产生了一个超大对象，并产生了一个复制后to区放不下的对象
+
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxwkukotj30ne0kadg9.jpg" alt="img" style="zoom:67%;" />
+
+      （4）当eden区再次被填满时，会再一次触发Minor GC，这次GC会将eden区和from区中存活的对象复制到to区，并且对象年龄+1，超大对象会直接晋升到老年代，to区放不下的对象也会直接晋升老年代。
+
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxwvkglbj30ne0kg764.jpg" alt="img" style="zoom:67%;" />
+
+      （5）程序继续运行，假设经过15次复制，某一对象依然存活，那么他将直接进入老年代。
+
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxxbhqkmj30ne0k9myx.jpg" alt="img" style="zoom:67%;" />
+
+      （6）老年代 Full GC
+
+      
+
+      在进行Minor GC之前，JVM还有一步操作，他会检查新生代所有对象使用的总内存是否小于老年代最大剩余连续内存，如果上述条件成立，那么这次Minor GC一定是安全的，因为即使所有新生代对象都进入老年代，老年代也不会内存溢出。如果上述条件不成立，JVM会查看参数HandlePromotionFailure[1]是否开启（JDK1.6以后默认开启），如果没开启，说明Minor GC后可能会存在老年代内存溢出的风险，会进行一次Full GC，如果开启，JVM还会检查历次晋升老年代对象的平均大小是否小于老年代最大连续内存空间，如果成立，会尝试直接进行Minor GC，如果不成立，老年代执行Full GC。
+
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxy1ba1hej30nl0gidi0.jpg" alt="img" style="zoom:67%;" />
+
+      eden区和from区的存活对象会复制到to区，超大对象和to区容纳不下的对象会直接晋升老年代。当eden区满时，触发Minor GC，此时判断老年代剩余连续内存已经小于新生代所有对象占用内存总和，假设HandlePromotionFailure参数开启，JVM还会继续判断老年代剩余连续内存是否大于历次晋升老年代对象的平均大小，如图所示，目前老年代还剩2个空间，如果之前平均每次晋升三个对象到老年代，剩余空间小于平均值，会触发Full GC。
+   
+      
+      
+      老年代回收-标记：
+      
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxzdyraqj30ne06y3yh.jpg" alt="img" style="zoom:67%;" />
+      
+      老年代回收-清除：
+      
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxzq66ybj30ne06pmx4.jpg" alt="img" style="zoom:67%;" />
+      
+      老年代回收-碎片整理：
+      
+      <img src="https://tva1.sinaimg.cn/large/008eGmZEgy1gmxxzxktj1j30nj06wq2w.jpg" alt="img" style="zoom:67%;" />
+      
+      
+   
    
